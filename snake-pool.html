@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <title>Monad Snake-Pool v2</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
+  <style>
+    body {
+      background:#111; color:#eee; font-family:Segoe UI, sans-serif;
+      display:flex; flex-direction:column; align-items:center;
+    }
+    canvas {
+      background:#2c5e2e; border:4px solid #836efd; border-radius:10px;
+      box-shadow:0 0 25px rgba(131,110,253,.4);
+    }
+    button {
+      margin:10px; padding:12px 24px; font-size:16px;
+      background:#836efd; color:white; border:none; border-radius:8px;
+      cursor:pointer;
+    }
+    .hud { margin:10px; font-size:18px }
+  </style>
+</head>
+<body>
+  <h1>🎱🐍 Monad Snake‑Pool v2</h1>
+  <button id="connectBtn">Verbind Wallet</button>
+  <div class="hud">Score: <span id="score">0</span></div>
+  <div class="hud" id="status">Niet gestart</div>
+  <canvas id="game" width="640" height="420"></canvas>
+
+<script>
+/********************
+ * CONFIG
+ ********************/
+const GRID = 20;
+const FRICTION = 0.96;
+
+/********************
+ * BLOCKCHAIN
+ ********************/
+const GAME_CONTRACT = "0xefFd0412Fa5e1F78e08a6De24dE5A220810bC5a8";
+const ABI = ["function submitScore(uint256 score) public"];
+let provider, signer, contract;
+
+async function connectWallet() {
+  if (!window.ethereum) return alert("MetaMask vereist");
+  const [account] = await ethereum.request({ method: "eth_requestAccounts" });
+  provider = new ethers.providers.Web3Provider(window.ethereum);
+  signer = provider.getSigner();
+  contract = new ethers.Contract(GAME_CONTRACT, ABI, signer);
+  document.getElementById("status").innerText = "Wallet verbonden";
+  game.start();
+}
+
+/********************
+ * GAME OBJECTS
+ ********************/
+class Snake {
+  constructor() {
+    this.x = 100; this.y = 100;
+    this.dx = GRID; this.dy = 0;
+    this.cells = [{x:this.x, y:this.y}];
+    this.max = 3;
+  }
+  move() {
+    this.x += this.dx; this.y += this.dy;
+    this.x = (this.x + game.w) % game.w;
+    this.y = (this.y + game.h) % game.h;
+    this.cells.unshift({x:this.x, y:this.y});
+    if (this.cells.length > this.max) this.cells.pop();
+  }
+  draw(ctx) {
+    ctx.fillStyle = "#836efd";
+    this.cells.forEach(c => ctx.fillRect(c.x, c.y, GRID-1, GRID-1));
+  }
+}
+
+class Ball {
+  constructor() { this.reset(); }
+  reset() {
+    this.x = 320; this.y = 200;
+    this.dx = 0; this.dy = 0;
+  }
+  update() {
+    this.x += this.dx; this.y += this.dy;
+    this.dx *= FRICTION; this.dy *= FRICTION;
+  }
+  draw(ctx) {
+    ctx.fillStyle = "white";
+    ctx.beginPath();
+    ctx.arc(this.x+GRID/2, this.y+GRID/2, GRID/2, 0, Math.PI*2);
+    ctx.fill();
+  }
+}
+
+class Hole {
+  constructor(x,y) { this.x=x; this.y=y; this.r=22; }
+  draw(ctx) {
+    ctx.fillStyle = "black";
+    ctx.beginPath(); ctx.arc(this.x,this.y,this.r,0,Math.PI*2); ctx.fill();
+  }
+}
+
+/********************
+ * GAME CORE
+ ********************/
+const game = {
+  canvas: document.getElementById("game"),
+  ctx: null,
+  w: 640, h: 420,
+  snake: new Snake(),
+  ball: new Ball(),
+  holes: [
+    new Hole(20,20), new Hole(620,20),
+    new Hole(20,400), new Hole(620,400)
+  ],
+  score: 0,
+  running: false,
+
+  start() {
+    this.ctx = this.canvas.getContext("2d");
+    this.running = true;
+    requestAnimationFrame(()=>this.loop());
+  },
+
+  loop() {
+    if (!this.running) return;
+    this.update(); this.draw();
+    setTimeout(()=>requestAnimationFrame(()=>this.loop()), 100);
+  },
+
+  update() {
+    this.snake.move();
+    this.ball.update();
+
+    // snake hits ball
+    if (Math.abs(this.snake.x - this.ball.x) < GRID &&
+        Math.abs(this.snake.y - this.ball.y) < GRID) {
+      const hx = (this.ball.x - this.snake.x);
+      const hy = (this.ball.y - this.snake.y);
+      const len = Math.hypot(hx,hy)||1;
+      this.ball.dx = (hx/len)*6;
+      this.ball.dy = (hy/len)*6;
+    }
+
+    // goal check
+    this.holes.forEach(h => {
+      const d = Math.hypot((this.ball.x+10)-h.x,(this.ball.y+10)-h.y);
+      if (d < h.r) {
+        this.score += 10;
+        this.snake.max++;
+        document.getElementById("score").innerText = this.score;
+        this.ball.reset();
+      }
+    });
+  },
+
+  draw() {
+    this.ctx.clearRect(0,0,this.w,this.h);
+    this.holes.forEach(h=>h.draw(this.ctx));
+    this.snake.draw(this.ctx);
+    this.ball.draw(this.ctx);
+  }
+};
+
+/********************
+ * INPUT
+ ********************/
+document.addEventListener("keydown", e => {
+  const s = game.snake;
+  if (e.key==="ArrowLeft" && s.dx===0){s.dx=-GRID;s.dy=0}
+  if (e.key==="ArrowRight"&& s.dx===0){s.dx=GRID;s.dy=0}
+  if (e.key==="ArrowUp"   && s.dy===0){s.dy=-GRID;s.dx=0}
+  if (e.key==="ArrowDown" && s.dy===0){s.dy=GRID;s.dx=0}
+});
+
+document.getElementById("connectBtn").onclick = connectWallet;
+</script>
+</body>
+</html>
